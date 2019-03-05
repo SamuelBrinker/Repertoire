@@ -9,41 +9,66 @@ from Bio.Alphabet import IUPAC
 
 def Translator(infile, datahandler2):
 	datahandler_list2 = []
-	for seq_record in SeqIO.parse(infile, 'fasta', IUPAC.ambiguous_dna):
+	datahandler_nucl_list2 = []
+	for seq_record in SeqIO.parse(infile, 'fasta'): ###PMH: removed iupac designation
 		for i in range(3): 				#(i=0 - i=1 - i=2)
-			s = seq_record.seq[i:]   #checks each open reading frame of each gene in the fasta file
+			s = seq_record.seq[i:]   #starts the sequence at the open reading frame "i" (0, 1, or 2)
 			while len(s)%3 != 0: # add N to the end of the region if not devisable by 3
 				s += 'N'
 			translated_record = SeqRecord(seq=s.translate(table=1), id=seq_record.id, description=seq_record.description+' frame='+str(i))
 			datahandler_list2.append(translated_record)
 
-			s = s.reverse_complement()   #checks the reverse compliment of the open reading frame of each gene in the fasta file
+			s = seq_record.seq[:len(seq_record.seq)-i].reverse_complement()   #reverse complements the sequence
 			while len(s)%3 != 0: # add N to the end of the region if not devisable by 3
 				s += 'N'
-			translated_record = SeqRecord(seq=s.translate(table=1), id=seq_record.id+"_reverse_compliment", description=seq_record.description+' frame='+str(i))
+			translated_record = SeqRecord(seq=s.translate(table=1), id=seq_record.id+"_reverse_complement", description="frame="+str(i))
 			datahandler_list2.append(translated_record)
 
 	SeqIO.write(datahandler_list2, datahandler2, 'fasta')
+
+	for seq_record in SeqIO.parse(infile, 'fasta'): ###PMH: removed iupac designation
+		for i in range(3): 				#(i=0 - i=1 - i=2)
+			s = seq_record.seq[i:]   #starts the sequence at the open reading frame "i" (0, 1, or 2)
+			while len(s)%3 != 0: # add N to the end of the region if not devisable by 3
+				s += 'N'
+			translated_record = SeqRecord(seq=s, id=seq_record.id, description=seq_record.description+' frame='+str(i))
+			datahandler_nucl_list2.append(translated_record)
+
+			s = seq_record.seq[:len(seq_record.seq)-i].reverse_complement()   #reverse complements the sequence
+			while len(s)%3 != 0: # add N to the end of the region if not devisable by 3
+				s += 'N'
+			translated_record = SeqRecord(seq=s, id=seq_record.id+"_reverse_complement", description="frame="+str(i))
+			datahandler_nucl_list2.append(translated_record)
+
+	SeqIO.write(datahandler_nucl_list2, "/Users/peterhenry/Documents/Bioinformatics/apii-coriandrii/updown_nucl2.fasta", 'fasta')
+
 	print '-'*20
 	print '// Translated sequence to amino acids'
 	print '-'*20
 
 def OrfFinder(datahandler2, min_prot_len, datahandler3, orfs, max_prot_len, max_d2m):
 	for seq_record in SeqIO.parse(datahandler2, 'fasta', IUPAC.protein):
-		genomic_region_up = int(seq_record.description.split('region:')[1].split('_')[0])
-		genomic_region_down = int(seq_record.description.split('region:')[1].split('_')[1].split(' ')[0])
+		genomic_region_start = int(seq_record.description.split('region:')[1].split('_')[0])
+		genomic_region_stop = int(seq_record.description.split('region:')[1].split('_')[1].split(' ')[0])
+		frame = int(seq_record.description.split('frame=')[1].split('\n')[0])
+		if str(seq_record.description.split(' ')[0].split('_')[-1]) == str("complement"):
+			rc = True
+		else:
+			rc = False
 
-		MetStop(seq_record.seq, seq_record.id, genomic_region_up, genomic_region_down, min_prot_len, datahandler3, orfs, max_prot_len, max_d2m)
+		MetStop(seq_record.seq, seq_record.id, genomic_region_start, genomic_region_stop, min_prot_len, datahandler3, orfs, max_prot_len, max_d2m, frame, rc)
 	SeqIO.write(orfs, datahandler3, 'fasta')
 	#print int(1/0)
 
 	print '// Wrote %s protein sequences with a mimp IR motif in their promoter and an ORF >%i and <%i aa to %s' % (len(orfs), min_prot_len, max_prot_len, datahandler3)
 	print '-'*20
 
-def MetStop(sequence, ident, genomic_region_up, genomic_region_down, min_prot_len, datahandler3, orfs, max_prot_len, max_d2m): #frame removec
+def MetStop(sequence, ident, genomic_region_start, genomic_region_stop, min_prot_len, datahandler3, orfs, max_prot_len, max_d2m, frame, rc): #frame removec
 	
 
-	met_location = [i for i, a in enumerate(sequence) if a == 'M']
+	met_location = [i for i, a in enumerate(sequence) if a == 'M'] 
+
+	region_length = int(genomic_region_stop)-int(genomic_region_start) #for calculating start/stop locations for orfs in reverse complement of up/down region
 
 	x=0
 	while x<len(met_location):
@@ -52,17 +77,38 @@ def MetStop(sequence, ident, genomic_region_up, genomic_region_down, min_prot_le
 			#print stop_location, "stop"
 			if stop_location>0:
 				prot = sequence[met_location[x]:stop_location+1] 	#+1 = add STOP
-				dist_to_gene_fromstop = (stop_location*3)
-			
-				dist_to_gene = (met_location[x]*3)		 	#genomic distance
-
-				if len(prot) > min_prot_len:
-					startpos = genomic_region_up+dist_to_gene
-					endpos = genomic_region_up+dist_to_gene_fromstop
-					orf_record = SeqRecord(seq=prot.strip('*'), id=str(ident).replace('downstream', 'ds').replace('upstream', 'us') +"|"+str(startpos)+'-'+str(endpos)+'|d2m:'+str(dist_to_gene)+'|len:'+str(len(prot)-1), description='')
-					if len(prot) < int(max_prot_len):
-						orfs.append(orf_record)
-
+				if rc == False:	
+					if frame == 0:
+						dist_to_start = (met_location[x]*3)		 	
+						dist_to_stop = (stop_location*3)
+					if frame == 1:
+						dist_to_start = ((met_location[x]*3)+1)	
+						dist_to_stop = ((stop_location*3)+1)
+					if frame == 2:
+						dist_to_start = ((met_location[x]*3)+2)		 	
+						dist_to_stop = ((stop_location*3)+2)
+					if len(prot) > min_prot_len:
+						startpos = genomic_region_start+dist_to_start
+						endpos = genomic_region_start+dist_to_stop
+						orf_record = SeqRecord(seq=prot.strip('*'), id=str(ident).replace('downstream', 'ds').replace('upstream', 'us') +"|"+str(startpos)+'-'+str(endpos)+'|d2m:'+str(dist_to_start)+'|len:'+str(len(prot)-1)+"|rc="+str(rc), description='')
+						if len(prot) < int(max_prot_len):
+							orfs.append(orf_record)
+				else:
+					if frame == 0:
+						dist_to_start = (region_length-met_location[x]*3)
+						dist_to_stop = (region_length-stop_location*3)		 	
+					if frame == 1:
+						dist_to_start = ((region_length-met_location[x]*3)-1)
+						dist_to_stop = ((region_length-stop_location*3)-1)		 
+					if frame == 2:
+						dist_to_start = ((region_length-met_location[x]*3)-2)
+						dist_to_stop = ((region_length-stop_location*3)-2)
+					if len(prot) > min_prot_len:
+						startpos = genomic_region_start+dist_to_start
+						endpos = genomic_region_start+dist_to_stop
+						orf_record = SeqRecord(seq=prot.strip('*'), id=str(ident).replace('downstream', 'ds').replace('upstream', 'us') +"|"+str(startpos)+'-'+str(endpos)+'|d2m:'+str(dist_to_start)+'|len:'+str(len(prot)-1)+"|rc="+str(rc), description='')
+						if len(prot) < int(max_prot_len):
+							orfs.append(orf_record)
 		x+=1
 	
 
@@ -126,7 +172,7 @@ def OrfWriter(datahandler3, signalpfile, min_prot_len, proteinoutfile, SignalPpa
 											orf_id=temp_id
 											signalpeptideseq = str(orf_seq[:int(cleavage_site_pos2)-1])
 											seq = str(signalpeptideseq.lower()+orf_seq[int(cleavage_site_pos2)-1:].upper())
-											orfie=">"+orf.replace('\n','')+' signalpeptideseq='+signalpeptideseq+'\n'+seq+"\n"
+											orfie=orf.replace('\n','')+' signalpeptideseq='+signalpeptideseq+'\n'+seq+"\n"
 											if orfie not in SPorfs:
 												SPorfs.append(orfie)
 							x+=1
@@ -171,7 +217,7 @@ def RunSignalP(datahandler3, signalpfile, organism, SignalPpath, SignalP_thresho
 			cline = SignalPpath+' -t %s -f summary -u %s %s > %s' % (organism, SignalP_threshold, outdirectory+"/split_data_"+str(y)+".fasta", signalpfile+str(y)+'.summary_out')
 			os.system(cline)
 			y-=1
-		cline="rm -f "+ outdirectory+"split_data_*.fasta"  #Removes previous iteration data
+#		cline="rm -f "+ outdirectory+"split_data_*.fasta"  #Removes previous iteration data
 		subprocess.check_output(['bash','-c', cline]) 
 	else:
 		cline = SignalPpath+' -t %s -f summary -u %s %s > %s' % (organism, SignalP_threshold, datahandler3, signalpfile+'.summary_out')
@@ -217,6 +263,7 @@ def ExtractOrfToFasta(proteinsfasta, uberinfile, puteff_dnaseqs, genome, puteff_
 			dist2mimp = seq_record.split('d2m:')[1].split('|')[0]
 			protlength = seq_record.split('|len:')[1].split('|')[0]
 			signalpeptideseq = seq_record.split('signalpeptideseq=')[1].replace('\n','')
+			rc = seq_record.split('=')[1].split(' ')[0] #ORF from reverse complement of upstream/downstream or not
 			proteinseq = proteinsfastafile[n+1]
 			x=0
 
@@ -238,7 +285,7 @@ def ExtractOrfToFasta(proteinsfasta, uberinfile, puteff_dnaseqs, genome, puteff_
 
 					genomicsequence = all_contigs[x+1][genomic_start_pos-1:genomic_end_pos-1]#, len(sc.seq[genomic_start_pos-1:genomic_end_pos-1])
 					print '   contig_'+str(puteff_supercontig)+'\tposition '+str(genomic_start_pos)+'-'+str(genomic_end_pos)+'\t'+signalpeptideseq
-					putEff_fastaentry = ">"+str(n).zfill(4)+'.'+signalpeptideseq+"_"+genome+"_d2m"+str(dist2mimp)+"_len"+str(protlength)+str(genomicsequence)+"\n\n"
+					putEff_fastaentry = ">"+str(n).zfill(4)+'.'+signalpeptideseq+"_"+genome+"_d2m"+str(dist2mimp)+"_len"+str(protlength)+"\n"+str(genomicsequence)+"\n"
 					dnaoutfile.write(putEff_fastaentry)
 																													#orientation						#D_value, mimp_IR_seq, mimp_IR_pos
 					puteff_attributes = [genome, puteff_supercontig, genomic_start_pos, genomic_end_pos, dist2mimp, protlength, signalpeptideseq, proteinseq, genomicsequence]
@@ -248,20 +295,35 @@ def ExtractOrfToFasta(proteinsfasta, uberinfile, puteff_dnaseqs, genome, puteff_
 					combined_putefffile.write(putEff_fastaentry)
 					combined_puteff_logfile_writer.write(putEff_logentry)
 
-				elif from_previous_program==True and sc_id == puteff_supercontig and r_start<=genomic_start_pos and r_end>=genomic_end_pos:
-					
-					genomicsequence = all_contigs[x+1][(genomic_start_pos-r_start):(genomic_end_pos-r_start)]#, len(sc.seq[genomic_start_pos-1:genomic_end_pos-1])
-					print '   contig_'+str(puteff_supercontig)+'\tposition '+str(genomic_start_pos)+'-'+str(genomic_end_pos)+'\t'+signalpeptideseq
-					putEff_fastaentry = ">"+str(n).zfill(4)+'.'+signalpeptideseq+"_"+genome+"_d2m"+str(dist2mimp)+"_len"+str(protlength)+"\n"+str(genomicsequence)+"\n\n"
-					dnaoutfile.write(putEff_fastaentry)
-																													#orientation						#D_value, mimp_IR_seq, mimp_IR_pos
-					puteff_attributes = [genome, puteff_supercontig, genomic_start_pos, genomic_end_pos, dist2mimp, protlength, signalpeptideseq, proteinseq, genomicsequence]
-					putEff_logentry = ('\t'.join(map(str,puteff_attributes)))+'\n'
-					puteff_logfile_writer.write(putEff_logentry)
+				elif from_previous_program==True and sc_id == puteff_supercontig:
+					if rc == "True" and r_start<=genomic_end_pos and r_end>=genomic_start_pos: #if ORF is from reverse complement (rc) of up/downstream region
+						genomicsequence = Seq(all_contigs[x+1][(genomic_end_pos-r_start):(genomic_start_pos-r_start)], generic_dna)# for sequences from rc: end positions < start positions
+						genomicsequence = genomicsequence.reverse_complement()
+						print '   contig_'+str(puteff_supercontig)+'\tposition '+str(genomic_start_pos)+'-'+str(genomic_end_pos)+'\t'+signalpeptideseq
+						putEff_fastaentry = ">"+str(n).zfill(4)+'.'+signalpeptideseq+"_"+genome+"_d2m"+str(dist2mimp)+"_len"+str(protlength)+"\n"+str(genomicsequence)+"\n"
+						dnaoutfile.write(putEff_fastaentry)
+																														#orientation						#D_value, mimp_IR_seq, mimp_IR_pos
+						puteff_attributes = [genome, puteff_supercontig, genomic_start_pos, genomic_end_pos, dist2mimp, protlength, signalpeptideseq, proteinseq, genomicsequence]
+						putEff_logentry = ('\t'.join(map(str,puteff_attributes)))+'\n'
+						puteff_logfile_writer.write(putEff_logentry)
 
-					#combined_putefffile will collect all the output from the mimpsearch; this means there will be many redundant put effectors.
-					combined_putefffile.write(putEff_fastaentry)
-					combined_puteff_logfile_writer.write(putEff_logentry)
+						#combined_putefffile will collect all the output from the mimpsearch; this means there will be many redundant put effectors.
+						combined_putefffile.write(putEff_fastaentry)
+						combined_puteff_logfile_writer.write(putEff_logentry)
+
+					elif rc == "False" and r_start<=genomic_start_pos and r_end>=genomic_end_pos:
+						genomicsequence = all_contigs[x+1][(genomic_start_pos-r_start):(genomic_end_pos-r_start)]#, len(sc.seq[genomic_start_pos-1:genomic_end_pos-1])
+						print '   contig_'+str(puteff_supercontig)+'\tposition '+str(genomic_start_pos)+'-'+str(genomic_end_pos)+'\t'+signalpeptideseq
+						putEff_fastaentry = ">"+str(n).zfill(4)+'.'+signalpeptideseq+"_"+genome+"_d2m"+str(dist2mimp)+"_len"+str(protlength)+"\n"+str(genomicsequence)+"\n"
+						dnaoutfile.write(putEff_fastaentry)
+																														#orientation						#D_value, mimp_IR_seq, mimp_IR_pos
+						puteff_attributes = [genome, puteff_supercontig, genomic_start_pos, genomic_end_pos, dist2mimp, protlength, signalpeptideseq, proteinseq, genomicsequence]
+						putEff_logentry = ('\t'.join(map(str,puteff_attributes)))+'\n'
+						puteff_logfile_writer.write(putEff_logentry)
+
+						#combined_putefffile will collect all the output from the mimpsearch; this means there will be many redundant put effectors.
+						combined_putefffile.write(putEff_fastaentry)
+						combined_puteff_logfile_writer.write(putEff_logentry)
 
 				x+=1
 		n+=1
@@ -303,6 +365,7 @@ def MainDef(genomefastafile, directory, folder, combined_puteff_fasta, combined_
 	if force!=True and (os.path.isfile(datahandler2)==True or os.path.isfile(datahandler3)==True or os.path.isfile(signalpfile)==True or os.path.isfile(proteinoutfile)==True or os.path.isfile(puteff_dnaseqs)==True or os.path.isfile(puteff_logfile)==True):
 		pass
 	else:
+		print("translator infile is: "+infile)
 		Translator(infile, datahandler2)
 		OrfFinder(datahandler2, min_prot_len, datahandler3, orfs, max_prot_len, max_d2m)
 		OrfWriter(datahandler3, signalpfile, min_prot_len, proteinoutfile, SignalPpath, SignalP_threshold,outdirectory)
@@ -334,7 +397,8 @@ class gene_finderApp():
 		directory = directory_folder.split(folder)[0]
 
 		file_extensions = (".fa", ".fasta", ".fas", "fna") # Specify the suffix of the genome files (.fa, .fasta, etc)
-		combined_puteff_dir = output_dir+'/01.gene_finder/'+folder+'_MetStopOut/'
+		combined_puteff_dir = output_dir+'/'
+#		combined_puteff_dir = output_dir+'/01.gene_finder/'+folder+'_MetStopOut/' ##old version
 
 		if not os.path.exists(combined_puteff_dir):
 			os.makedirs(combined_puteff_dir)
